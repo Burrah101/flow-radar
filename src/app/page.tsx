@@ -1,5 +1,7 @@
 import React from "react";
 
+type ChainId = "solana" | "base" | "ethereum" | "bsc";
+
 type PairRow = {
   pairAddress: string;
   baseSymbol: string;
@@ -7,12 +9,12 @@ type PairRow = {
   priceUsd: number;
   volume24h: number;
   change24h: number;
-  chainId: "solana" | "base";
+  chainId: ChainId;
   url: string;
 };
 
-async function fetchPairs(chain: "solana" | "base"): Promise<PairRow[]> {
-  const query = chain === "solana" ? "solana" : "base";
+async function fetchPairs(chain: ChainId): Promise<PairRow[]> {
+  const query = chain; // we just search by chain name and filter by chainId
 
   const res = await fetch(
     `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(
@@ -100,7 +102,7 @@ function FlowGauge({ solVolume, baseVolume }: { solVolume: number; baseVolume: n
     <div className="w-full bg-slate-800/60 rounded-2xl p-4 border border-slate-700">
       <div className="flex items-center justify-between mb-3">
         <div className="text-sm uppercase tracking-wide text-slate-400">
-          Liquidity Flow Meter
+          Liquidity Flow Meter (Solana vs Base)
         </div>
         <div className="flex flex-wrap gap-3 text-xs">
           <span className="flex items-center gap-1 text-cyan-300">
@@ -136,7 +138,7 @@ function FlowGauge({ solVolume, baseVolume }: { solVolume: number; baseVolume: n
 
 function PairTable({ title, pairs }: { title: string; pairs: PairRow[] }) {
   return (
-    <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex-1">
+    <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex-1 min-w-[240px]">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
         <span className="text-xs text-slate-500">
@@ -205,9 +207,11 @@ function PairTable({ title, pairs }: { title: string; pairs: PairRow[] }) {
 }
 
 export default async function Page() {
-  const [solPairs, basePairs] = await Promise.all([
+  const [solPairs, basePairs, ethPairs, bscPairs] = await Promise.all([
     fetchPairs("solana"),
     fetchPairs("base"),
+    fetchPairs("ethereum"),
+    fetchPairs("bsc"),
   ]);
 
   const solVolume = solPairs.reduce((sum, p) => sum + (p.volume24h || 0), 0);
@@ -233,6 +237,7 @@ export default async function Page() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50">
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+        {/* Header */}
         <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-cyan-400 to-emerald-400 flex items-center justify-center text-slate-950 font-black text-lg">
@@ -244,7 +249,11 @@ export default async function Page() {
               </h1>
               <p className="text-sm text-slate-400 mt-1">
                 The market compass for the chain-rotation era. Follow the flow,
-                not the FOMO.
+                not the FOMO. Now watching{" "}
+                <span className="font-semibold text-cyan-200">
+                  Solana · Base · Ethereum · BNB
+                </span>{" "}
+                (Monad coming soon).
               </p>
             </div>
           </div>
@@ -256,7 +265,7 @@ export default async function Page() {
           </div>
         </header>
 
-        {/* Flow summary */}
+        {/* Flow summary + share/support */}
         <section className="grid md:grid-cols-[2fr,1.4fr] gap-4">
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
@@ -342,12 +351,19 @@ export default async function Page() {
 
         <FlowGauge solVolume={solVolume} baseVolume={baseVolume} />
 
+        {/* Top row: Solana & Base */}
         <section className="flex flex-col md:flex-row gap-4">
           <PairTable title="Solana · Active Pairs" pairs={solPairs} />
           <PairTable title="Base · Active Pairs" pairs={basePairs} />
         </section>
 
-        {/* Boost's Flow Notes */}
+        {/* Second row: ETH & BNB */}
+        <section className="flex flex-col md:flex-row gap-4">
+          <PairTable title="Ethereum · Active Pairs" pairs={ethPairs} />
+          <PairTable title="BNB · Active Pairs" pairs={bscPairs} />
+        </section>
+
+        {/* Boost's notes + Monad coming soon */}
         <section className="grid md:grid-cols-2 gap-4 pt-2">
           <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 text-xs space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -360,41 +376,32 @@ export default async function Page() {
                 force trades on the weak side.
               </li>
               <li>
-                Scan top pairs for volume + % moves. Early movers &gt; late chasers.
+                Use Ethereum &amp; BNB sections to spot secondary rotations and
+                multi-chain narratives.
               </li>
               <li>
                 Avoid entering when dominance is already extreme and volume is fading.
               </li>
               <li>
-                Remember: this dashboard is for map + context, not blind entries. Flow
-                first, execution second.
+                Remember: this dashboard is for map + context, not blind entries.
               </li>
             </ol>
           </div>
 
           <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 text-xs space-y-2">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Learn &amp; Alerts
+              Monad · Coming Soon
             </div>
             <p className="text-slate-300">
-              New to flow-based trading? Start with{" "}
-              <a
-                href="/learn"
-                className="text-cyan-300 hover:text-cyan-200 underline"
-              >
-                Flow Literacy 101
-              </a>{" "}
-              to understand how liquidity rotation affects your entries.
+              Monad mainnet is just coming online with its own DEX ecosystem. Flow
+              Radar will plug Monad into this dashboard as soon as stable on-chain
+              liquidity data is available from indexers/aggregators. The idea is to
+              track how capital rotates between Solana, Base, EVM majors and Monad
+              once it&apos;s live.
             </p>
             <p className="text-slate-300">
-              Want real-time signal? Check{" "}
-              <a
-                href="/alerts"
-                className="text-emerald-300 hover:text-emerald-200 underline"
-              >
-                Flow Radar Alerts (preview)
-              </a>{" "}
-              for how Pro mode will work.
+              If you&apos;re active in the Monad ecosystem and want to help us wire in
+              the best data source, reach out when you share Flow Radar.
             </p>
           </div>
         </section>
@@ -404,9 +411,7 @@ export default async function Page() {
             Flow Radar is an experimental, educational dashboard. Nothing here is
             financial advice. Always manage your own risk.
           </div>
-          <div>
-            Made with ⚡ in Pattaya by Boost × Ice.
-          </div>
+          <div>Made with ⚡ in Pattaya by Boost × Ice.</div>
         </footer>
       </div>
     </main>
