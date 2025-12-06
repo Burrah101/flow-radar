@@ -14,7 +14,7 @@ type PairRow = {
 };
 
 async function fetchPairs(chain: ChainId): Promise<PairRow[]> {
-  const query = chain; // we just search by chain name and filter by chainId
+  const query = chain;
 
   const res = await fetch(
     `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(
@@ -93,13 +93,49 @@ function calcDominance(solVolume: number, baseVolume: number) {
   };
 }
 
+function flowRotation(volumes: { id: ChainId; label: string; volume: number }[]) {
+  const total = volumes.reduce((s, v) => s + v.volume, 0);
+  if (!total) {
+    return {
+      rotationPath: "No reliable volume data yet.",
+      mood: "Neutral / Low Activity",
+      concentrationScore: 0,
+    };
+  }
+
+  const sorted = [...volumes].sort((a, b) => b.volume - a.volume);
+  const rotationPath = sorted.map((v) => v.label).join(" → ");
+
+  const top = sorted[0];
+  const second = sorted[1];
+  const topShare = (top.volume / total) * 100;
+  const gap = top.volume - (second?.volume ?? 0);
+
+  let mood = "";
+
+  if (topShare > 60 && gap > total * 0.15) {
+    mood = "High concentration — one chain is clearly in control (high risk / high reward).";
+  } else if (topShare > 50) {
+    mood = "Directional but not extreme — rotation chances are real, stay alert.";
+  } else if (topShare > 40) {
+    mood = "Mixed flow — chains are competing for attention, pick your spots carefully.";
+  } else {
+    mood = "Diffuse flow — no one chain owns the day, don’t overtrade.";
+  }
+
+  // concentrationScore 0–100 for FlowPulse width
+  const concentrationScore = Math.min(100, Math.max(0, topShare));
+
+  return { rotationPath, mood, concentrationScore };
+}
+
 function FlowGauge({ solVolume, baseVolume }: { solVolume: number; baseVolume: number }) {
   const total = solVolume + baseVolume || 1;
   const solPct = (solVolume / total) * 100;
   const basePct = 100 - solPct;
 
   return (
-    <div className="w-full bg-slate-800/60 rounded-2xl p-4 border border-slate-700">
+    <div className="card glow-blue">
       <div className="flex items-center justify-between mb-3">
         <div className="text-sm uppercase tracking-wide text-slate-400">
           Liquidity Flow Meter (Solana vs Base)
@@ -138,7 +174,7 @@ function FlowGauge({ solVolume, baseVolume }: { solVolume: number; baseVolume: n
 
 function PairTable({ title, pairs }: { title: string; pairs: PairRow[] }) {
   return (
-    <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 flex-1 min-w-[240px]">
+    <div className="card flex-1 min-w-[260px]">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
         <span className="text-xs text-slate-500">
@@ -206,6 +242,68 @@ function PairTable({ title, pairs }: { title: string; pairs: PairRow[] }) {
   );
 }
 
+function TopMovers({ movers }: { movers: (PairRow & { chainLabel: string })[] }) {
+  if (!movers.length) return null;
+
+  return (
+    <div className="card text-xs space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        Top 5 Movers Across Chains
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-xs">
+          <thead>
+            <tr className="text-slate-400">
+              <th className="text-left py-1 pr-2">Token</th>
+              <th className="text-left py-1 pr-2">Chain</th>
+              <th className="text-right py-1 pr-2">24h Vol</th>
+              <th className="text-right py-1 pr-2">24h %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {movers.map((m, i) => (
+              <tr key={m.pairAddress || i} className="border-t border-slate-800">
+                <td className="py-1 pr-2">
+                  <a
+                    href={m.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex flex-col hover:underline"
+                  >
+                    <span className="text-slate-100 font-medium">
+                      {m.baseSymbol || "—"}
+                    </span>
+                    <span className="text-slate-500 truncate max-w-[160px]">
+                      {m.baseName}
+                    </span>
+                  </a>
+                </td>
+                <td className="py-1 pr-2 text-slate-300">{m.chainLabel}</td>
+                <td className="py-1 pr-2 text-right text-slate-100">
+                  ${formatNumber(m.volume24h)}
+                </td>
+                <td
+                  className={
+                    "py-1 pr-2 text-right font-semibold " +
+                    (m.change24h > 0
+                      ? "text-emerald-400"
+                      : m.change24h < 0
+                      ? "text-rose-400"
+                      : "text-slate-300")
+                  }
+                >
+                  {m.change24h > 0 ? "+" : ""}
+                  {m.change24h.toFixed(2)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default async function Page() {
   const [solPairs, basePairs, ethPairs, bscPairs] = await Promise.all([
     fetchPairs("solana"),
@@ -216,45 +314,87 @@ export default async function Page() {
 
   const solVolume = solPairs.reduce((sum, p) => sum + (p.volume24h || 0), 0);
   const baseVolume = basePairs.reduce((sum, p) => sum + (p.volume24h || 0), 0);
+  const ethVolume = ethPairs.reduce((sum, p) => sum + (p.volume24h || 0), 0);
+  const bscVolume = bscPairs.reduce((sum, p) => sum + (p.volume24h || 0), 0);
 
   const { solPct, basePct, headline, detail } = calcDominance(
     solVolume,
     baseVolume
   );
 
+  const volumes = [
+    { id: "solana" as ChainId, label: "Solana", volume: solVolume },
+    { id: "base" as ChainId, label: "Base", volume: baseVolume },
+    { id: "ethereum" as ChainId, label: "Ethereum", volume: ethVolume },
+    { id: "bsc" as ChainId, label: "BNB", volume: bscVolume },
+  ];
+
+  const { rotationPath, mood, concentrationScore } = flowRotation(volumes);
+
   const siteUrl = "https://flow-radar-omega.vercel.app/";
   const tweetText = encodeURIComponent(
     `Checking cross-chain liquidity with Flow Radar by Boost & Ice.\nSolana: ${solPct.toFixed(
       1
-    )}% · Base: ${basePct.toFixed(1)}%.`
+    )}% · Base: ${basePct.toFixed(1)}%.\nRotation: ${rotationPath}`
   );
   const telegramText = encodeURIComponent(
     `Flow Radar snapshot\nSolana: ${solPct.toFixed(
       1
-    )}% · Base: ${basePct.toFixed(1)}%.\n`
+    )}% · Base: ${basePct.toFixed(
+      1
+    )}%.\nRotation: ${rotationPath}\n${siteUrl}`
   );
 
+  // Top movers across chains by absolute 24h % change, with decent volume
+  const allPairs: PairRow[] = [
+    ...solPairs,
+    ...basePairs,
+    ...ethPairs,
+    ...bscPairs,
+  ];
+  const movers = allPairs
+    .filter((p) => p.volume24h > 10_000) // skip dead pairs
+    .sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h))
+    .slice(0, 5)
+    .map((p) => ({
+      ...p,
+      chainLabel:
+        p.chainId === "solana"
+          ? "Solana"
+          : p.chainId === "base"
+          ? "Base"
+          : p.chainId === "ethereum"
+          ? "Ethereum"
+          : "BNB",
+    }));
+
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-50">
+    <main className="min-h-screen text-slate-50">
       <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         {/* Header */}
         <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-cyan-400 to-emerald-400 flex items-center justify-center text-slate-950 font-black text-lg">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-[var(--solana-cyan)] to-[var(--base-emerald)] flex items-center justify-center text-slate-950 font-black text-lg glow-cyan">
               F
             </div>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-                Flow Radar
-              </h1>
-              <p className="text-sm text-slate-400 mt-1">
+              <h1 className="title">Flow Radar</h1>
+              <p className="subtitle mt-1">
                 The market compass for the chain-rotation era. Follow the flow,
                 not the FOMO. Now watching{" "}
                 <span className="font-semibold text-cyan-200">
                   Solana · Base · Ethereum · BNB
                 </span>{" "}
-                (Monad coming soon).
+                <span className="text-slate-400 text-xs">
+                  (Monad coming soon).
+                </span>
               </p>
+              <div className="flex gap-1 mt-2 text-[11px]">
+                <span className="chain-tag sol-tag">SOL</span>
+                <span className="chain-tag base-tag">BASE</span>
+                <span className="chain-tag eth-tag">ETH</span>
+                <span className="chain-tag bnb-tag">BNB</span>
+              </div>
             </div>
           </div>
           <div className="text-right text-xs text-slate-500">
@@ -265,38 +405,57 @@ export default async function Page() {
           </div>
         </header>
 
-        {/* Flow summary + share/support */}
+        {/* Flow summary + share/support + FlowPulse */}
         <section className="grid md:grid-cols-[2fr,1.4fr] gap-4">
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
+          <div className="card">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
               Today&apos;s Flow Summary
             </div>
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <div className="text-lg font-semibold text-slate-50">
-                  {headline}
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <div className="text-lg font-semibold text-slate-50">
+                    {headline}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">{detail}</p>
                 </div>
-                <p className="text-xs text-slate-400 mt-1">{detail}</p>
+                <div className="flex gap-4 text-xs">
+                  <div>
+                    <div className="text-slate-400">Solana</div>
+                    <div className="text-cyan-300 font-semibold">
+                      {solPct.toFixed(1)}%
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-400">Base</div>
+                    <div className="text-emerald-300 font-semibold">
+                      {basePct.toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="flex gap-4 text-xs">
-                <div>
-                  <div className="text-slate-400">Solana</div>
-                  <div className="text-cyan-300 font-semibold">
-                    {solPct.toFixed(1)}%
-                  </div>
+
+              {/* FlowPulse */}
+              <div className="mt-1">
+                <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+                  <span>FlowPulse (concentration)</span>
+                  <span>{concentrationScore.toFixed(1)} / 100</span>
                 </div>
-                <div>
-                  <div className="text-slate-400">Base</div>
-                  <div className="text-emerald-300 font-semibold">
-                    {basePct.toFixed(1)}%
-                  </div>
+                <div className="h-2 rounded-full bg-slate-900 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-cyan-400 via-emerald-400 to-purple-400"
+                    style={{ width: `${concentrationScore}%` }}
+                  />
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">
+                  {mood}
                 </div>
               </div>
             </div>
           </div>
 
           {/* Share + support */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex flex-col gap-3">
+          <div className="card flex flex-col gap-3">
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Share this snapshot
@@ -340,7 +499,7 @@ export default async function Page() {
               <div className="mt-1 flex flex-wrap gap-2">
                 <a
                   href={`solana:AE9FjC3eQFMJG4DYd59xbA9kqaMd5mRA35aCn1h4FLrD?amount=0.1`}
-                  className="px-3 py-1.5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs"
+                  className="tip-btn px-3 py-1.5 rounded-full text-xs"
                 >
                   Send 0.1 SOL tip
                 </a>
@@ -349,7 +508,29 @@ export default async function Page() {
           </div>
         </section>
 
-        <FlowGauge solVolume={solVolume} baseVolume={baseVolume} />
+        {/* Rotation Engine + FlowGauge */}
+        <section className="grid md:grid-cols-[1.4fr,1.6fr] gap-4">
+          <div className="card text-xs space-y-2">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Chain Rotation Engine
+            </div>
+            <p className="text-slate-300">
+              <span className="text-slate-400">Rotation path: </span>
+              <span className="font-semibold text-slate-100">
+                {rotationPath}
+              </span>
+            </p>
+            <p className="text-slate-300">
+              <span className="text-slate-400">Market mood: </span>
+              {mood}
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Read this left → right: where capital is most comfortable right
+              now, and where it may rotate next as narratives shift.
+            </p>
+          </div>
+          <FlowGauge solVolume={solVolume} baseVolume={baseVolume} />
+        </section>
 
         {/* Top row: Solana & Base */}
         <section className="flex flex-col md:flex-row gap-4">
@@ -363,45 +544,45 @@ export default async function Page() {
           <PairTable title="BNB · Active Pairs" pairs={bscPairs} />
         </section>
 
-        {/* Boost's notes + Monad coming soon */}
-        <section className="grid md:grid-cols-2 gap-4 pt-2">
-          <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 text-xs space-y-2">
+        {/* Top movers + playbook / Monad */}
+        <section className="grid lg:grid-cols-3 gap-4 pt-2">
+          <TopMovers movers={movers} />
+
+          <div className="card text-xs space-y-2 lg:col-span-1">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Boost&apos;s Flow Playbook
             </div>
             <ol className="list-decimal list-inside space-y-1 text-slate-300">
-              <li>Check chain dominance: who has the flow today — Solana or Base?</li>
+              <li>Start with Chain Rotation: who has the strongest flow?</li>
               <li>
-                If one chain is clearly winning (&gt;60%), focus attention there. Don&apos;t
-                force trades on the weak side.
+                Use the FlowPulse to gauge risk: higher concentration = faster moves.
               </li>
               <li>
-                Use Ethereum &amp; BNB sections to spot secondary rotations and
-                multi-chain narratives.
+                Focus first on the dominant chain, then hunt for rotation on others.
               </li>
               <li>
-                Avoid entering when dominance is already extreme and volume is fading.
+                Use Top Movers to see which tokens are actually absorbing that flow.
               </li>
               <li>
-                Remember: this dashboard is for map + context, not blind entries.
+                Remember: this is a map, not a trading signal. Execution is always
+                your responsibility.
               </li>
             </ol>
           </div>
 
-          <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 text-xs space-y-2">
+          <div className="card text-xs space-y-2 lg:col-span-1">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Monad · Coming Soon
             </div>
             <p className="text-slate-300">
               Monad mainnet is just coming online with its own DEX ecosystem. Flow
               Radar will plug Monad into this dashboard as soon as stable on-chain
-              liquidity data is available from indexers/aggregators. The idea is to
-              track how capital rotates between Solana, Base, EVM majors and Monad
-              once it&apos;s live.
+              liquidity data is available from indexers/aggregators.
             </p>
             <p className="text-slate-300">
-              If you&apos;re active in the Monad ecosystem and want to help us wire in
-              the best data source, reach out when you share Flow Radar.
+              The goal: track how capital rotates between Solana, Base, EVM majors and
+              Monad once it&apos;s live — so you can see the next narrative forming
+              before most people even notice.
             </p>
           </div>
         </section>
